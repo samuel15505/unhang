@@ -15,22 +15,22 @@
 //! -u, --update                Update the language file.
 //! -h, --help                  Print help.
 
-use std::fs::read_to_string;
-use std::path::{Path, PathBuf};
-use std::time::Instant;
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    format: String,
+    language: Option<String>,
+    update: Option<bool>,
+}
 
 fn get_words_of_len<'a>(length: usize, words: &[&'a str]) -> Vec<&'a str> {
     words.iter().filter(|&&word| word.len() == length).copied().collect()
 }
 
 fn main() {
-    let words_path: PathBuf = ["data", "words.txt"].iter().collect();
-    let file = read_to_string(words_path).unwrap();
-    let words: Vec<_> = file.lines().collect();
+    let args = Args::parse();
     
-    let now = Instant::now();
-    let lens = get_words_of_len(5, &words);
-    let elapsed = now.elapsed();
-    
-    println!("{} {:?} in {:?}", &lens.len(), &lens[0..10], elapsed);
+    println!("{args:?}");
 }
