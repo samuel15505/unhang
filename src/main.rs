@@ -18,15 +18,20 @@
 use clap::builder::Str;
 use clap::Parser;
 use std::error::Error;
+use std::path::{Path, PathBuf};
+use std::{fs, io};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    pos_format: Option<String>,
-    #[arg(short, long, default_value = "english")]
-    language: String,
+    #[arg(value_parser = format_to_vec)]
+    pos_format: Vec<Vec<Word>>,
+    #[arg(short, long, default_value = "english", value_delimiter = ',')]
+    /// Languages to find words in
+    language: Vec<String>,
     #[arg(short, long)]
-    update: bool,
+    /// Update the selected <LANGUAGE> from a line-delimited file found at <UPDATE>
+    update: Option<PathBuf>,
 }
 
 fn get_words_of_len<'a>(length: usize, words: &[&'a str]) -> Vec<&'a str> {
@@ -37,19 +42,43 @@ fn get_words_of_len<'a>(length: usize, words: &[&'a str]) -> Vec<&'a str> {
         .collect()
 }
 
-const VALID_CHARS: [char; 11] = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-'];
-fn format_to_vec(s: &str) -> Result<Vec<u8>, String> {
-     if s.chars().all(|c| VALID_CHARS.contains(&c)) {
-         Ok(s.split('-').map(|c| c.parse().unwrap()).collect())
-     } else { 
-         Err("Invalid character in string".to_string())
-     }
+// these take into account words containing apostrophes (that's -> 4'1)
+// and dashes (mind-blown -> 4-5)
+const VALID_CHARS: [char; 13] = [
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', '\'', '_',
+];
+
+fn format_to_vec(s: &str) -> Result<Vec<Vec<Word>>, String> {
+    if s.chars().all(|c| VALID_CHARS.contains(&c)) {
+        Ok(s.split('_')
+            .map(|s| {
+                s.chars()
+                    .map(|c| match c {
+                        '\'' => Word::Apostrophe,
+                        '-' => Word::Dash,
+                        _ => Word::Letter(None),
+                    })
+                    .collect()
+            })
+            .collect())
+    } else {
+        Err("Invalid character in string".to_string())
+    }
 }
 
-fn main() -> Result<(), &'static str> {
+#[derive(Copy, Clone, Debug)]
+enum Word {
+    Letter(Option<char>),
+    Dash,
+    Apostrophe,
+}
+
+fn update(path: &Path, lang: &str) -> Result<(), io::Error> {
+    Ok(())
+}
+
+fn main() {
     let args = Args::parse();
 
     println!("{args:?}");
-
-    Ok(())
 }
