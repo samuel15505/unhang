@@ -21,6 +21,8 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::{fs, io};
+use std::ops::{Deref, DerefMut};
+use crate::Fragment::Letter;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -99,6 +101,20 @@ impl Display for Word {
     }
 }
 
+impl Deref for Word {
+    type Target = Vec<Fragment>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Word {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 impl From<&str> for Word {
     fn from(value: &str) -> Self {
         let mut res = Vec::new();
@@ -117,6 +133,22 @@ impl From<&str> for Word {
     }
 }
 
+impl Word {
+    fn add_letter(&mut self, letter: char, positions: &[usize]) -> Result<(), &'static str> {
+        for pos in positions {
+            self[*pos] = Fragment::Letter(Some(letter));
+            match self[*pos] {
+                Fragment::Letter(None) => self[*pos] = Fragment::Letter(Some(letter)),
+                _ => return Err("can't change a dash or apostrophe"),
+            }
+        }
+
+        Ok(())
+    }
+
+    fn add_letters() {}
+}
+
 fn update(path: &Path, lang: &str) -> Result<(), io::Error> {
     Ok(())
 }
@@ -124,6 +156,9 @@ fn update(path: &Path, lang: &str) -> Result<(), io::Error> {
 fn main() {
     let args = Args::parse();
 
+    let mut word = Word::from("2-7'1");
+    word.add_letter('C', &[2]);
+
     println!("{args:?}");
-    println!("{}", Word::from("2-7'1"));
+    println!("{}", word);
 }
