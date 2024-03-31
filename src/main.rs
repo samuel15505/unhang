@@ -116,10 +116,11 @@ impl DerefMut for Word {
 }
 
 impl From<&str> for Word {
-    fn from(value: &str) -> Self {
+    fn from(value: &str) -> Self {        
         let mut res = Vec::new();
 
         for c in value.chars() {
+            assert!(VALID_CHARS.contains(&c));
             match c {
                 '\'' => res.push(Fragment::Apostrophe),
                 '-' => res.push(Fragment::Dash),
@@ -149,6 +150,40 @@ impl Word {
     fn add_letters() {}
 }
 
+#[derive(Debug)]
+struct Hangman ( Vec<Word> );
+
+impl From<&str> for Hangman {
+    fn from(value: &str) -> Self {
+        Self ( value.split('_')
+            .map(Word::from)
+            .collect())
+    }
+}
+
+impl Deref for Hangman {
+    type Target = Vec<Word>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Hangman {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Display for Hangman {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for word in self.iter() {
+            write!(f, "{word} ")?;
+        }
+        Ok(())
+    }
+}
+
 fn update(path: &Path, lang: &str) -> Result<(), io::Error> {
     Ok(())
 }
@@ -159,6 +194,9 @@ fn main() {
     let mut word = Word::from("2-7'1");
     word.add_letter('C', &[2]);
 
+    let mut hangman = Hangman::from("2_7-2'1");
+
     println!("{args:?}");
-    println!("{}", word);
+    println!("{word}");
+    println!("{hangman}");
 }
