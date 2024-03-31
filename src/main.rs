@@ -15,14 +15,15 @@
 //! -u, --update                Update the language file.
 //! -h, --help                  Print help.
 
-use clap::builder::Str;
+extern crate core;
+
+use core::num::fmt::Part;
 use clap::Parser;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::{fs, io};
-use std::ops::{Deref, DerefMut};
-use crate::Fragment::Letter;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -86,6 +87,29 @@ impl Display for Fragment {
     }
 }
 
+impl PartialEq<char> for Fragment {
+    fn eq(&self, other: &char) -> bool {
+        match self {
+            Self::Apostrophe => other == &'\'',
+            Self::Dash => other == &'-',
+            Self::Letter(None) => true,
+            Self::Letter(Some(letter)) => other == letter,
+        }
+    }
+}
+
+impl PartialEq<Fragment> for char {
+    fn eq(&self, other: &Fragment) -> bool {
+        // match other { 
+        //     Fragment::Apostrophe => self == &'\'',
+        //     Fragment::Dash => self == &'-',
+        //     Fragment::Letter(None) => true,
+        //     Fragment::Letter(Some(letter)) => letter == other,
+        // }
+        other == self
+    }
+}
+
 #[derive(Debug)]
 struct Word(Vec<Fragment>);
 
@@ -98,6 +122,24 @@ impl Display for Word {
             }
         }
         Ok(())
+    }
+}
+
+impl PartialEq<str> for Word {
+    fn eq(&self, other: &str) -> bool {
+        for (i, ch) in other.chars().enumerate() {
+            if self[i] == ch {
+                return false
+            }
+        }
+
+        true
+    }
+}
+
+impl PartialEq<Word> for str {
+    fn eq(&self, other: &Word) -> bool {
+        other == self
     }
 }
 
@@ -125,7 +167,8 @@ impl From<&str> for Word {
                 '\'' => res.push(Fragment::Apostrophe),
                 '-' => res.push(Fragment::Dash),
                 c => {
-                    (0..c.to_digit(10).unwrap_or_default()).for_each(|_| res.push(Fragment::Letter(None)));
+                    (0..c.to_digit(10).unwrap_or_default())
+                        .for_each(|_| res.push(Fragment::Letter(None)));
                 }
             }
         }
@@ -146,18 +189,16 @@ impl Word {
 
         Ok(())
     }
-
-    fn add_letters() {}
 }
 
 #[derive(Debug)]
-struct Hangman ( Vec<Word> );
+struct Hangman(Vec<Word>);
+
+impl Hangman {}
 
 impl From<&str> for Hangman {
     fn from(value: &str) -> Self {
-        Self ( value.split('_')
-            .map(Word::from)
-            .collect())
+        Self(value.split('_').map(Word::from).collect())
     }
 }
 
