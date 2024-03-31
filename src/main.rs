@@ -116,7 +116,7 @@ impl DerefMut for Word {
 }
 
 impl From<&str> for Word {
-    fn from(value: &str) -> Self {        
+    fn from(value: &str) -> Self {
         let mut res = Vec::new();
 
         for c in value.chars() {
@@ -125,7 +125,7 @@ impl From<&str> for Word {
                 '\'' => res.push(Fragment::Apostrophe),
                 '-' => res.push(Fragment::Dash),
                 c => {
-                    (0..c.to_digit(10).unwrap()).for_each(|_| res.push(Fragment::Letter(None)));
+                    (0..c.to_digit(10).unwrap_or_default()).for_each(|_| res.push(Fragment::Letter(None)));
                 }
             }
         }
