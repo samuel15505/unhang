@@ -17,11 +17,11 @@
 
 use clap::Parser;
 use std::collections::HashMap;
+use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::{fs, io};
-use std::error::Error;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -255,6 +255,29 @@ impl Display for Hangman {
     }
 }
 
+#[derive(Default)]
+struct LangDict(HashMap<String, HashMap<char, u8>>);
+
+impl LangDict {
+    fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Deref for LangDict {
+    type Target = HashMap<String, HashMap<char, u8>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for LangDict {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 fn update<T>(path: T, lang: &str) -> Result<(), io::Error>
 where
     T: AsRef<Path>,
@@ -274,8 +297,8 @@ where
         .collect();
 
     fs::write(
-        &write_path,
-        ron::to_string(&results).expect("serialisation unsuccesful"),
+        write_path,
+        ron::to_string(&results).expect("serialization unsuccessful"),
     )?;
 
     Ok(())
@@ -285,7 +308,7 @@ fn try_load(lang: &str) -> io::Result<HashMap<String, HashMap<char, u8>>> {
     let read_path: PathBuf = ["data", &format!("{}.ron", lang.to_lowercase())]
         .iter()
         .collect();
-    Ok(ron::from_str(&fs::read_to_string(read_path)?).expect("deserialisation unsuccesful"))
+    Ok(ron::from_str(&fs::read_to_string(read_path)?).expect("deserialization unsuccessful"))
 }
 
 fn main() {
@@ -295,10 +318,9 @@ fn main() {
         update(path, &args.language[0]).unwrap();
     }
     match try_load(&args.language[0]) {
-        Ok(lang) => { 
+        Ok(lang) => {
             println!("{:?}", lang.get("muffin"));
-            
-        },
+        }
         Err(e) => println!("{e}"),
     }
 }
