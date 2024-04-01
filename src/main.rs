@@ -15,27 +15,29 @@
 //! -u, --update                Update the language file.
 //! -h, --help                  Print help.
 
-extern crate core;
-
-use core::num::fmt::Part;
 use clap::Parser;
-use std::error::Error;
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::{fs, io};
+use std::error::Error;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    #[arg(value_parser = format_to_vec)]
-    pos_format: Vec<Vec<Fragment>>,
+    #[arg(value_parser = get_hangman)]
+    pos_format: Hangman,
     #[arg(short, long, default_value = "english", value_delimiter = ',')]
     /// Languages to find words in
     language: Vec<String>,
     #[arg(short, long)]
     /// Update the selected <LANGUAGE> from a line-delimited file found at <UPDATE>
     update: Option<PathBuf>,
+}
+
+fn get_hangman(s: &str) -> Result<Hangman, String> {
+    Hangman::try_from(s).map_err(|_| "invalid character in format string".to_string())
 }
 
 fn get_words_of_len<'a>(length: usize, words: &[&'a str]) -> Vec<&'a str> {
@@ -100,7 +102,7 @@ impl PartialEq<char> for Fragment {
 
 impl PartialEq<Fragment> for char {
     fn eq(&self, other: &Fragment) -> bool {
-        // match other { 
+        // match other {
         //     Fragment::Apostrophe => self == &'\'',
         //     Fragment::Dash => self == &'-',
         //     Fragment::Letter(None) => true,
@@ -110,7 +112,7 @@ impl PartialEq<Fragment> for char {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Word(Vec<Fragment>);
 
 impl Display for Word {
@@ -129,7 +131,7 @@ impl PartialEq<str> for Word {
     fn eq(&self, other: &str) -> bool {
         for (i, ch) in other.chars().enumerate() {
             if self[i] == ch {
-                return false
+                return false;
             }
         }
 
@@ -191,14 +193,42 @@ impl Word {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Hangman(Vec<Word>);
 
 impl Hangman {}
 
-impl From<&str> for Hangman {
-    fn from(value: &str) -> Self {
-        Self(value.split('_').map(Word::from).collect())
+// impl From<&str> for Hangman {
+//     fn from(value: &str) -> Self {
+//         for c in value.chars() {
+//             assert!(VALID_CHARS.contains(&c));
+//         }
+//         Self(value.split('_').map(Word::from).collect())
+//     }
+// }
+
+#[derive(Debug, Clone)]
+struct InvalidChar;
+
+impl Display for InvalidChar {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unexpected character in source string")
+    }
+}
+
+impl Error for InvalidChar {}
+
+impl TryFrom<&str> for Hangman {
+    type Error = InvalidChar;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        for c in value.chars() {
+            if !VALID_CHARS.contains(&c) {
+                return Err(InvalidChar);
+            }
+        }
+
+        Ok(Self(value.split('_').map(Word::from).collect()))
     }
 }
 
@@ -225,19 +255,50 @@ impl Display for Hangman {
     }
 }
 
-fn update(path: &Path, lang: &str) -> Result<(), io::Error> {
+fn update<T>(path: T, lang: &str) -> Result<(), io::Error>
+where
+    T: AsRef<Path>,
+{
+    let mut results: HashMap<String, HashMap<char, u8>> = HashMap::new();
+    let text = fs::read_to_string(path)?;
+    for word in text.lines() {
+        let mut counts: HashMap<char, u8> = HashMap::new();
+        for char in word.to_lowercase().chars() {
+            counts.entry(char).and_modify(|e| *e += 1).or_insert(1);
+        }
+        results.insert(word.to_lowercase().to_string(), counts);
+    }
+
+    let write_path: PathBuf = ["data", &format!("{}.ron", lang.to_lowercase())]
+        .iter()
+        .collect();
+
+    fs::write(
+        &write_path,
+        ron::to_string(&results).expect("serialisation unsuccesful"),
+    )?;
+
     Ok(())
+}
+
+fn try_load(lang: &str) -> io::Result<HashMap<String, HashMap<char, u8>>> {
+    let read_path: PathBuf = ["data", &format!("{}.ron", lang.to_lowercase())]
+        .iter()
+        .collect();
+    Ok(ron::from_str(&fs::read_to_string(read_path)?).expect("deserialisation unsuccesful"))
 }
 
 fn main() {
     let args = Args::parse();
-
-    let mut word = Word::from("2-7'1");
-    word.add_letter('C', &[2]);
-
-    let mut hangman = Hangman::from("2_7-2'1");
-
     println!("{args:?}");
-    println!("{word}");
-    println!("{hangman}");
+    if let Some(path) = args.update {
+        update(path, &args.language[0]).unwrap();
+    }
+    match try_load(&args.language[0]) {
+        Ok(lang) => { 
+            println!("{:?}", lang.get("muffin"));
+            
+        },
+        Err(e) => println!("{e}"),
+    }
 }
