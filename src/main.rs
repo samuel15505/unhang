@@ -262,6 +262,37 @@ impl LangDict {
     fn new() -> Self {
         Self::default()
     }
+
+    fn try_load<T>(path: T) -> Result<Self, io::Error>
+    where
+        T: AsRef<Path>,
+    {
+        Ok(Self(
+            ron::from_str(&fs::read_to_string(path)?).expect("deserialization unsuccessful"),
+        ))
+    }
+
+    fn try_update<T>(src_path: T, dest_path: T) -> Result<(), io::Error>
+        where
+            T: AsRef<Path>,
+    {
+        let mut results: HashMap<String, HashMap<char, u8>> = HashMap::new();
+        let text = fs::read_to_string(src_path)?;
+        for word in text.lines() {
+            let mut counts: HashMap<char, u8> = HashMap::new();
+            for char in word.to_lowercase().chars() {
+                counts.entry(char).and_modify(|e| *e += 1).or_insert(1);
+            }
+            results.insert(word.to_lowercase().to_string(), counts);
+        }
+
+        fs::write(
+            dest_path,
+            ron::to_string(&results).expect("serialization unsuccessful"),
+        )?;
+
+        Ok(())
+    }
 }
 
 impl Deref for LangDict {
@@ -317,7 +348,8 @@ fn main() {
     if let Some(path) = args.update {
         update(path, &args.language[0]).unwrap();
     }
-    match try_load(&args.language[0]) {
+    let src_file: PathBuf = ["data", &format!("{}.ron", &args.language[0])].iter().collect();
+    match LangDict::try_load(src_file) {
         Ok(lang) => {
             println!("{:?}", lang.get("muffin"));
         }
