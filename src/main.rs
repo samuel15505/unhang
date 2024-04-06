@@ -16,11 +16,13 @@
 //! -h, --help                  Print help.
 
 use clap::Parser;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 use std::{fs, io};
 
 #[derive(Parser, Debug)]
@@ -40,39 +42,13 @@ fn get_hangman(s: &str) -> Result<Hangman, String> {
     Hangman::try_from(s).map_err(|_| "invalid character in format string".to_string())
 }
 
-fn get_words_of_len<'a>(length: usize, words: &[&'a str]) -> Vec<&'a str> {
-    words
-        .iter()
-        .filter(|&&word| word.len() == length)
-        .copied()
-        .collect()
-}
-
 // these take into account words containing apostrophes (that's -> 4'1)
 // and dashes (mind-blown -> 4-5)
 const VALID_CHARS: [char; 13] = [
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', '\'', '_',
 ];
 
-fn format_to_vec(s: &str) -> Result<Vec<Vec<Fragment>>, String> {
-    if s.chars().all(|c| VALID_CHARS.contains(&c)) {
-        Ok(s.split('_')
-            .map(|s| {
-                s.chars()
-                    .map(|c| match c {
-                        '\'' => Fragment::Apostrophe,
-                        '-' => Fragment::Dash,
-                        _ => Fragment::Letter(None),
-                    })
-                    .collect()
-            })
-            .collect())
-    } else {
-        Err("Invalid character in string".to_string())
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum Fragment {
     Letter(Option<char>),
     Dash,
@@ -112,7 +88,7 @@ impl PartialEq<Fragment> for char {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct Word(Vec<Fragment>);
 
 impl Display for Word {
@@ -130,7 +106,7 @@ impl Display for Word {
 impl PartialEq<str> for Word {
     fn eq(&self, other: &str) -> bool {
         for (i, ch) in other.chars().enumerate() {
-            if self[i] == ch {
+            if self[i] != ch {
                 return false;
             }
         }
@@ -168,10 +144,8 @@ impl From<&str> for Word {
             match c {
                 '\'' => res.push(Fragment::Apostrophe),
                 '-' => res.push(Fragment::Dash),
-                c => {
-                    (0..c.to_digit(10).unwrap_or_default())
-                        .for_each(|_| res.push(Fragment::Letter(None)));
-                }
+                '_' => res.push(Fragment::Letter(None)),
+                c => res.push(Fragment::Letter(Some(c))),
             }
         }
 
@@ -191,9 +165,27 @@ impl Word {
 
         Ok(())
     }
+
+    fn from_format_string(value: &str) -> Self {
+        let mut res = Vec::new();
+
+        for c in value.chars() {
+            assert!(VALID_CHARS.contains(&c));
+            match c {
+                '\'' => res.push(Fragment::Apostrophe),
+                '-' => res.push(Fragment::Dash),
+                c => {
+                    (0..c.to_digit(10).unwrap_or_default())
+                        .for_each(|_| res.push(Fragment::Letter(None)));
+                }
+            }
+        }
+
+        Self(res)
+    }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct Hangman(Vec<Word>);
 
 impl Hangman {}
@@ -228,7 +220,9 @@ impl TryFrom<&str> for Hangman {
             }
         }
 
-        Ok(Self(value.split('_').map(Word::from).collect()))
+        Ok(Self(
+            value.split('_').map(Word::from_format_string).collect(),
+        ))
     }
 }
 
@@ -255,43 +249,28 @@ impl Display for Hangman {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 struct LangDict(HashMap<String, HashMap<char, u8>>);
+
+impl From<&str> for LangDict {
+    fn from(value: &str) -> Self {
+        let mut res = Self::new();
+
+        for line in value.lines() {
+            let mut counts: HashMap<char, u8> = HashMap::new();
+            for char in line.to_lowercase().chars() {
+                counts.entry(char).and_modify(|e| *e += 1).or_insert(1);
+            }
+            res.insert(line.to_lowercase().to_string(), counts);
+        }
+
+        res
+    }
+}
 
 impl LangDict {
     fn new() -> Self {
         Self::default()
-    }
-
-    fn try_load<T>(path: T) -> Result<Self, io::Error>
-    where
-        T: AsRef<Path>,
-    {
-        Ok(Self(
-            ron::from_str(&fs::read_to_string(path)?).expect("deserialization unsuccessful"),
-        ))
-    }
-
-    fn try_update<T>(src_path: T, dest_path: T) -> Result<(), io::Error>
-        where
-            T: AsRef<Path>,
-    {
-        let mut results: HashMap<String, HashMap<char, u8>> = HashMap::new();
-        let text = fs::read_to_string(src_path)?;
-        for word in text.lines() {
-            let mut counts: HashMap<char, u8> = HashMap::new();
-            for char in word.to_lowercase().chars() {
-                counts.entry(char).and_modify(|e| *e += 1).or_insert(1);
-            }
-            results.insert(word.to_lowercase().to_string(), counts);
-        }
-
-        fs::write(
-            dest_path,
-            ron::to_string(&results).expect("serialization unsuccessful"),
-        )?;
-
-        Ok(())
     }
 }
 
@@ -309,50 +288,36 @@ impl DerefMut for LangDict {
     }
 }
 
-fn update<T>(path: T, lang: &str) -> Result<(), io::Error>
-where
-    T: AsRef<Path>,
-{
-    let mut results: HashMap<String, HashMap<char, u8>> = HashMap::new();
-    let text = fs::read_to_string(path)?;
-    for word in text.lines() {
-        let mut counts: HashMap<char, u8> = HashMap::new();
-        for char in word.to_lowercase().chars() {
-            counts.entry(char).and_modify(|e| *e += 1).or_insert(1);
-        }
-        results.insert(word.to_lowercase().to_string(), counts);
-    }
-
-    let write_path: PathBuf = ["data", &format!("{}.ron", lang.to_lowercase())]
-        .iter()
-        .collect();
-
-    fs::write(
-        write_path,
-        ron::to_string(&results).expect("serialization unsuccessful"),
-    )?;
-
-    Ok(())
-}
-
-fn try_load(lang: &str) -> io::Result<HashMap<String, HashMap<char, u8>>> {
-    let read_path: PathBuf = ["data", &format!("{}.ron", lang.to_lowercase())]
-        .iter()
-        .collect();
-    Ok(ron::from_str(&fs::read_to_string(read_path)?).expect("deserialization unsuccessful"))
-}
-
 fn main() {
-    let args = Args::parse();
-    println!("{args:?}");
-    if let Some(path) = args.update {
-        update(path, &args.language[0]).unwrap();
+    println!("Hello world!");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frag_eq() {
+        assert_eq!(Fragment::Letter(Some('c')), 'c');
+        assert_eq!(Fragment::Letter(None), 'c');
     }
-    let src_file: PathBuf = ["data", &format!("{}.ron", &args.language[0])].iter().collect();
-    match LangDict::try_load(src_file) {
-        Ok(lang) => {
-            println!("{:?}", lang.get("muffin"));
-        }
-        Err(e) => println!("{e}"),
+
+    #[test]
+    fn word_eq() {
+        assert_eq!(&Word::from("____"), "test");
+    }
+
+    #[test]
+    fn word_from() {
+        let word = vec![Fragment::Letter(None); 3];
+        assert_eq!(&Word::from("___"), &Word(word));
+    }
+
+    #[test]
+    fn lang_dict_parse() {
+        let count = [('f', 2), ('i', 1), ('m', 1), ('n', 1), ('u', 1)];
+        let count: HashMap<char, u8> = HashMap::from(count);
+        let lang_dict = HashMap::from([("muffin".to_string(), count)]);
+        assert_eq!(LangDict::from("muffin"), LangDict(lang_dict));
     }
 }
