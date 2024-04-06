@@ -8,22 +8,16 @@
 )]
 
 //! A hangman solver. Simple as.
-//! Positional argument is words format, in format {word 1 len}-{word 2 len}-...-{word n len}.
-//! Arguments are:
-//! -f, --format <WORD FORMAT>  Format of the words, in format L1-L2-...-Ln.
-//! -l, --language <LANGUAGE>   Language to solve in.
-//! -u, --update                Update the language file.
-//! -h, --help                  Print help.
 
-use clap::Parser;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::ops::{Deref, DerefMut};
-use std::path::{Path, PathBuf};
-use std::time::Instant;
-use std::{fs, io};
+use std::path::PathBuf;
+use std::str::FromStr;
+
+use clap::Parser;
+use serde::{Deserialize, Serialize};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -91,6 +85,9 @@ impl PartialEq<Fragment> for char {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Word(Vec<Fragment>);
 
+#[derive(Debug, Eq, PartialEq)]
+struct WordParseError;
+
 impl Display for Word {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         for c in &self.0 {
@@ -135,21 +132,26 @@ impl DerefMut for Word {
     }
 }
 
-impl From<&str> for Word {
-    fn from(value: &str) -> Self {
+impl FromStr for Word {
+    type Err = WordParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut res = Vec::new();
 
-        for c in value.chars() {
-            assert!(VALID_CHARS.contains(&c));
-            match c {
-                '\'' => res.push(Fragment::Apostrophe),
-                '-' => res.push(Fragment::Dash),
-                '_' => res.push(Fragment::Letter(None)),
-                c => res.push(Fragment::Letter(Some(c))),
+        for c in s.chars() {
+            if VALID_CHARS.contains(&c) {
+                match c {
+                    '\'' => res.push(Fragment::Apostrophe),
+                    '-' => res.push(Fragment::Dash),
+                    '_' => res.push(Fragment::Letter(None)),
+                    c => res.push(Fragment::Letter(Some(c))),
+                }
+            } else {
+                return Err(WordParseError);
             }
         }
 
-        Self(res)
+        Ok(Self(res))
     }
 }
 
@@ -252,19 +254,28 @@ impl Display for Hangman {
 #[derive(Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 struct LangDict(HashMap<String, HashMap<char, u8>>);
 
-impl From<&str> for LangDict {
-    fn from(value: &str) -> Self {
+#[derive(Debug, Eq, PartialEq)]
+struct LangDictParseError;
+
+impl FromStr for LangDict {
+    type Err = LangDictParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut res = Self::new();
 
-        for line in value.lines() {
+        for line in s.lines() {
             let mut counts: HashMap<char, u8> = HashMap::new();
             for char in line.to_lowercase().chars() {
-                counts.entry(char).and_modify(|e| *e += 1).or_insert(1);
+                if char.is_alphabetic() {
+                    counts.entry(char).and_modify(|e| *e += 1).or_insert(1);
+                } else {
+                    return Err(LangDictParseError);
+                }
             }
             res.insert(line.to_lowercase().to_string(), counts);
         }
 
-        res
+        Ok(res)
     }
 }
 
@@ -304,13 +315,13 @@ mod tests {
 
     #[test]
     fn word_eq() {
-        assert_eq!(&Word::from("____"), "test");
+        assert_eq!(&Word::from_str("____").unwrap(), "test");
     }
 
     #[test]
     fn word_from() {
         let word = vec![Fragment::Letter(None); 3];
-        assert_eq!(&Word::from("___"), &Word(word));
+        assert_eq!(&Word::from_str("___").unwrap(), &Word(word));
     }
 
     #[test]
@@ -318,6 +329,6 @@ mod tests {
         let count = [('f', 2), ('i', 1), ('m', 1), ('n', 1), ('u', 1)];
         let count: HashMap<char, u8> = HashMap::from(count);
         let lang_dict = HashMap::from([("muffin".to_string(), count)]);
-        assert_eq!(LangDict::from("muffin"), LangDict(lang_dict));
+        assert_eq!(LangDict::from_str("muffin").unwrap(), LangDict(lang_dict));
     }
 }
