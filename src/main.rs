@@ -12,8 +12,9 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::fs;
 use std::ops::{Deref, DerefMut};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use clap::Parser;
@@ -27,13 +28,25 @@ struct Args {
     #[arg(short, long, default_value = "english", value_delimiter = ',')]
     /// Languages to find words in
     language: Vec<String>,
-    #[arg(short, long)]
-    /// Update the selected <LANGUAGE> from a line-delimited file found at <UPDATE>
-    update: Option<PathBuf>,
+    #[arg(short, long, value_delimiter = ',')]
+    /// Update the selected language from a line-delimited file found at designated path
+    update: Option<Vec<PathBuf>>,
 }
 
 fn get_hangman(s: &str) -> Result<Hangman, String> {
     Hangman::try_from(s).map_err(|_| "invalid character in format string".to_string())
+}
+
+fn update_lang<T>(src_path: T, lang: &str) -> Result<(), Box<dyn Error>>
+where
+    T: AsRef<Path>,
+{
+    let s = fs::read_to_string(src_path)?;
+    let lang_dict: LangDict = s.parse()?;
+    let path: PathBuf = ["data", &format!("{lang}.ron")].iter().collect();
+    fs::write(path, ron::to_string(&lang_dict)?)?;
+
+    Ok(())
 }
 
 // these take into account words containing apostrophes (that's -> 4'1)
@@ -257,6 +270,14 @@ struct LangDict(HashMap<String, HashMap<char, u8>>);
 #[derive(Debug, Eq, PartialEq)]
 struct LangDictParseError;
 
+impl Display for LangDictParseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unable to parse file into LangDict")
+    }
+}
+
+impl Error for LangDictParseError {}
+
 impl FromStr for LangDict {
     type Err = LangDictParseError;
 
@@ -300,7 +321,8 @@ impl DerefMut for LangDict {
 }
 
 fn main() {
-    println!("Hello world!");
+    let args = Args::parse();
+    println!("{args:?}");
 }
 
 #[cfg(test)]
