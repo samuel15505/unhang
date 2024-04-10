@@ -287,7 +287,7 @@ impl FromStr for LangDict {
         for line in s.lines() {
             let mut counts: HashMap<char, u8> = HashMap::new();
             for char in line.to_lowercase().chars() {
-                if char.is_alphabetic() {
+                if char.is_alphabetic() || char == '\'' || char == '-' {
                     counts.entry(char).and_modify(|e| *e += 1).or_insert(1);
                 } else {
                     return Err(LangDictParseError);
@@ -303,6 +303,18 @@ impl FromStr for LangDict {
 impl LangDict {
     fn new() -> Self {
         Self::default()
+    }
+
+    fn get_matching(&self, value: &Word) -> Self {
+        let mut res = Self::new();
+
+        for (key, val) in self.iter() {
+            if key.as_str() == value {
+                res.insert(key.clone(), val.clone());
+            }
+        }
+
+        res
     }
 }
 
@@ -323,6 +335,21 @@ impl DerefMut for LangDict {
 fn main() {
     let args = Args::parse();
     println!("{args:?}");
+    let mut langdicts = Vec::new();
+    if let Some(path_vec) = args.update {
+        for (i, lang) in args.language.iter().enumerate() {
+            let text = fs::read_to_string(&path_vec[i]).unwrap();
+            langdicts.push(LangDict::from_str(&text).unwrap());
+            let path: PathBuf = ["data", &format!("{lang}.ron")].iter().collect();
+            fs::write(path, ron::to_string(langdicts.last().unwrap()).unwrap()).unwrap();
+        };
+    } else { 
+        for lang in args.language {
+            let path: PathBuf = ["data", &format!("{lang}.ron")].iter().collect();
+            let text = fs::read_to_string(path).unwrap();
+            langdicts.push(ron::from_str(&text).unwrap());
+        };
+    };
 }
 
 #[cfg(test)]
