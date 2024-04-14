@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs;
+use std::io;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -115,6 +116,9 @@ impl Display for Word {
 
 impl PartialEq<str> for Word {
     fn eq(&self, other: &str) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
         for (i, ch) in other.chars().enumerate() {
             if self[i] != ch {
                 return false;
@@ -171,9 +175,9 @@ impl FromStr for Word {
 impl Word {
     fn add_letter(&mut self, letter: char, positions: &[usize]) -> Result<(), &'static str> {
         for pos in positions {
-            self[*pos] = Fragment::Letter(Some(letter));
+            // self[*pos] = Fragment::Letter(Some(letter));
             match self[*pos] {
-                Fragment::Letter(None) => self[*pos] = Fragment::Letter(Some(letter)),
+                Fragment::Letter(_) => self[*pos] = Fragment::Letter(Some(letter)),
                 _ => return Err("can't change a dash or apostrophe"),
             }
         }
@@ -268,7 +272,9 @@ impl Display for Hangman {
 struct LangDict(HashMap<String, HashMap<char, u8>>);
 
 #[derive(Debug, Eq, PartialEq)]
-struct LangDictParseError;
+struct LangDictParseError {
+    source: InvalidCharError,
+}
 
 impl Display for LangDictParseError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -277,6 +283,19 @@ impl Display for LangDictParseError {
 }
 
 impl Error for LangDictParseError {}
+
+#[derive(Debug, Eq, PartialEq)]
+struct InvalidCharError {
+    char: char,
+}
+
+impl Display for InvalidCharError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Unexpected char {} found", self.char)
+    }
+}
+
+impl Error for InvalidCharError {}
 
 impl FromStr for LangDict {
     type Err = LangDictParseError;
@@ -287,10 +306,12 @@ impl FromStr for LangDict {
         for line in s.lines() {
             let mut counts: HashMap<char, u8> = HashMap::new();
             for char in line.to_lowercase().chars() {
-                if char.is_alphabetic() || char == '\'' || char == '-' {
+                if char.is_alphanumeric() || "\'-&,./!".contains(char) {
                     counts.entry(char).and_modify(|e| *e += 1).or_insert(1);
                 } else {
-                    return Err(LangDictParseError);
+                    return Err(LangDictParseError {
+                        source: InvalidCharError { char },
+                    });
                 }
             }
             res.insert(line.to_lowercase().to_string(), counts);
@@ -315,6 +336,20 @@ impl LangDict {
         }
 
         res
+    }
+
+    fn rank_letters(&self) -> Vec<char> {
+        let mut res = HashMap::new();
+        for entry in self.values() {
+            for (&char, &val) in entry {
+                res.entry(char)
+                    .and_modify(|e| *e += u32::from(val))
+                    .or_insert_with(|| u32::from(val));
+            }
+        }
+        let mut res: Vec<_> = res.into_iter().collect();
+        res.sort_by(|a, b| b.1.cmp(&a.1));
+        res.iter().map(|&(ch, _)| ch).collect()
     }
 }
 
@@ -342,14 +377,48 @@ fn main() {
             langdicts.push(LangDict::from_str(&text).unwrap());
             let path: PathBuf = ["data", &format!("{lang}.ron")].iter().collect();
             fs::write(path, ron::to_string(langdicts.last().unwrap()).unwrap()).unwrap();
-        };
-    } else { 
+        }
+    } else {
         for lang in args.language {
             let path: PathBuf = ["data", &format!("{lang}.ron")].iter().collect();
             let text = fs::read_to_string(path).unwrap();
             langdicts.push(ron::from_str(&text).unwrap());
-        };
+        }
     };
+    let mut word = args.pos_format[0].clone();
+    let mut matches = langdicts[0].get_matching(&word);
+    loop {
+        let mut ranked = matches.rank_letters();
+        println!("{ranked:?}");
+        let mut suggestion = None;
+
+        while let Some(char) = ranked.pop() {
+            if !word.contains(&Fragment::Letter(Some(char))) {
+                suggestion = Some(char);
+            }
+        }
+        if let Some(char) = suggestion {
+            println!("word is {word}");
+            println!("best option: {char}");
+            println!("enter your guess here as (char,(pos,pos,pos))");
+            let mut buf = String::new();
+            io::stdin().read_line(&mut buf).unwrap();
+            let (char, pos) = buf.trim().split_once(',').unwrap();
+            let char = char.chars().next().unwrap();
+            let pos: Vec<_> = pos
+                .strip_prefix('(')
+                .unwrap()
+                .strip_suffix(')')
+                .unwrap()
+                .split(',')
+                .map(|e| e.parse().unwrap())
+                .collect();
+            word.add_letter(char, &pos).unwrap();
+            matches = matches.get_matching(&word);
+        } else {
+            break;
+        }
+    }
 }
 
 #[cfg(test)]
