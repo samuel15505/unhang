@@ -9,7 +9,7 @@
 
 //! A hangman solver. Simple as.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs;
@@ -47,16 +47,14 @@ const VALID_CHARS: [char; 13] = [
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum Fragment {
     Letter(Option<char>),
-    Dash,
-    Apostrophe,
+    Punctuation(char),
 }
 
 impl Display for Fragment {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Letter(c) => write!(f, "{}", c.unwrap_or('_')),
-            Self::Apostrophe => write!(f, "'"),
-            Self::Dash => write!(f, "-"),
+            Self::Punctuation(c) => write!(f, "{c}"),
         }
     }
 }
@@ -64,10 +62,9 @@ impl Display for Fragment {
 impl PartialEq<char> for Fragment {
     fn eq(&self, other: &char) -> bool {
         match self {
-            Self::Apostrophe => other == &'\'',
-            Self::Dash => other == &'-',
-            Self::Letter(None) => true,
+            Self::Punctuation(c) => other == c,
             Self::Letter(Some(letter)) => other == letter,
+            Self::Letter(None) => other.is_alphanumeric(),
         }
     }
 }
@@ -144,15 +141,10 @@ impl FromStr for Word {
         let mut res = Vec::new();
 
         for c in s.chars() {
-            if VALID_CHARS.contains(&c) {
-                match c {
-                    '\'' => res.push(Fragment::Apostrophe),
-                    '-' => res.push(Fragment::Dash),
-                    '_' => res.push(Fragment::Letter(None)),
-                    c => res.push(Fragment::Letter(Some(c))),
-                }
-            } else {
-                return Err(WordParseError);
+            match c {
+                '_' => res.push(Fragment::Letter(None)),
+                c if c.is_alphanumeric() => res.push(Fragment::Letter(Some(c))),
+                c => res.push(Fragment::Punctuation(c)),
             }
         }
 
@@ -179,12 +171,11 @@ impl Word {
         for c in value.chars() {
             assert!(VALID_CHARS.contains(&c));
             match c {
-                '\'' => res.push(Fragment::Apostrophe),
-                '-' => res.push(Fragment::Dash),
-                c => {
+                c if c.is_digit(10) => {
                     (0..c.to_digit(10).unwrap_or_default())
                         .for_each(|_| res.push(Fragment::Letter(None)));
                 }
+                c => res.push(Fragment::Punctuation(c)),
             }
         }
 
@@ -259,7 +250,7 @@ impl Display for Hangman {
 }
 
 #[derive(Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-struct LangDict(HashMap<String, HashMap<char, u8>>);
+struct LangDict(HashMap<String, HashSet<char>>);
 
 #[derive(Debug, Eq, PartialEq)]
 struct LangDictParseError {
@@ -294,17 +285,17 @@ impl FromStr for LangDict {
         let mut res = Self::new();
 
         for line in s.lines() {
-            let mut counts: HashMap<char, u8> = HashMap::new();
+            let mut set: HashSet<char> = HashSet::new();
             for char in line.to_lowercase().chars() {
                 if char.is_alphanumeric() || "\'-&,./!".contains(char) {
-                    counts.entry(char).and_modify(|e| *e += 1).or_insert(1);
+                    set.insert(char);
                 } else {
                     return Err(LangDictParseError {
                         source: InvalidCharError { char },
                     });
                 }
             }
-            res.insert(line.to_lowercase().to_string(), counts);
+            res.insert(line.to_lowercase().to_string(), set);
         }
 
         Ok(res)
@@ -334,22 +325,27 @@ impl LangDict {
     }
 
     fn rank_letters(&self) -> Vec<char> {
-        let mut res = HashMap::new();
-        for entry in self.values() {
-            for (&char, &val) in entry {
-                res.entry(char)
-                    .and_modify(|e| *e += u32::from(val))
-                    .or_insert_with(|| u32::from(val));
-            }
-        }
+        let res = self.count_letters();
         let mut res: Vec<_> = res.into_iter().collect();
         res.sort_by(|a, b| b.1.cmp(&a.1));
         res.iter().map(|&(ch, _)| ch).collect()
     }
+
+    fn count_letters(&self) -> HashMap<char, i32> {
+        let mut res = HashMap::new();
+        for entry in self.values() {
+            for &char in entry {
+                res.entry(char)
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+        }
+        res
+    }
 }
 
 impl Deref for LangDict {
-    type Target = HashMap<String, HashMap<char, u8>>;
+    type Target = HashMap<String, HashSet<char>>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -415,6 +411,7 @@ fn main() {
                 matches.remove_with_letter(char);
             };
             word.add_letter(char, &pos).unwrap();
+            println!("{:?}", matches.count_letters());
             matches = dbg!(matches.get_matching(&word));
         } else {
             break;
@@ -430,11 +427,14 @@ mod tests {
     fn frag_eq() {
         assert_eq!(Fragment::Letter(Some('c')), 'c');
         assert_eq!(Fragment::Letter(None), 'c');
+        assert_ne!(Fragment::Punctuation('-'), 'a');
     }
 
     #[test]
     fn word_eq() {
         assert_eq!(&Word::from_str("____").unwrap(), "test");
+        assert_ne!(&Word::from_str("__-_").unwrap(), "test");
+        assert_ne!(&Word::from_str("___").unwrap(), "ad-");
     }
 
     #[test]
@@ -445,8 +445,8 @@ mod tests {
 
     #[test]
     fn lang_dict_parse() {
-        let count = [('f', 2), ('i', 1), ('m', 1), ('n', 1), ('u', 1)];
-        let count: HashMap<char, u8> = HashMap::from(count);
+        let count = ['f', 'i', 'm', 'n', 'u'];
+        let count: HashSet<char> = HashSet::from(count);
         let lang_dict = HashMap::from([("muffin".to_string(), count)]);
         assert_eq!(LangDict::from_str("muffin").unwrap(), LangDict(lang_dict));
     }
