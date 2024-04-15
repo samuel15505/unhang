@@ -15,7 +15,7 @@ use std::fmt::{Display, Formatter};
 use std::fs;
 use std::io;
 use std::ops::{Deref, DerefMut};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use clap::Parser;
@@ -36,18 +36,6 @@ struct Args {
 
 fn get_hangman(s: &str) -> Result<Hangman, String> {
     Hangman::try_from(s).map_err(|_| "invalid character in format string".to_string())
-}
-
-fn update_lang<T>(src_path: T, lang: &str) -> Result<(), Box<dyn Error>>
-where
-    T: AsRef<Path>,
-{
-    let s = fs::read_to_string(src_path)?;
-    let lang_dict: LangDict = s.parse()?;
-    let path: PathBuf = ["data", &format!("{lang}.ron")].iter().collect();
-    fs::write(path, ron::to_string(&lang_dict)?)?;
-
-    Ok(())
 }
 
 // these take into account words containing apostrophes (that's -> 4'1)
@@ -204,8 +192,10 @@ impl Word {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct Hangman(Vec<Word>);
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
+struct Hangman {
+    words: Vec<Word>,
+}
 
 impl Hangman {}
 
@@ -239,9 +229,9 @@ impl TryFrom<&str> for Hangman {
             }
         }
 
-        Ok(Self(
-            value.split('_').map(Word::from_format_string).collect(),
-        ))
+        Ok(Self {
+            words: value.split('_').map(Word::from_format_string).collect(),
+        })
     }
 }
 
@@ -249,13 +239,13 @@ impl Deref for Hangman {
     type Target = Vec<Word>;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.words
     }
 }
 
 impl DerefMut for Hangman {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        &mut self.words
     }
 }
 
@@ -338,6 +328,11 @@ impl LangDict {
         res
     }
 
+    fn remove_with_letter(&mut self, val: char) {
+        self.retain(|k, _| !k.contains(val));
+        self.shrink_to_fit();
+    }
+
     fn rank_letters(&self) -> Vec<char> {
         let mut res = HashMap::new();
         for entry in self.values() {
@@ -387,13 +382,14 @@ fn main() {
     };
     let mut word = args.pos_format[0].clone();
     let mut matches = langdicts[0].get_matching(&word);
+    let mut attempts = Vec::new();
     loop {
         let mut ranked = matches.rank_letters();
         println!("{ranked:?}");
         let mut suggestion = None;
 
         while let Some(char) = ranked.pop() {
-            if !word.contains(&Fragment::Letter(Some(char))) {
+            if !&attempts.contains(&char) {
                 suggestion = Some(char);
             }
         }
@@ -405,16 +401,21 @@ fn main() {
             io::stdin().read_line(&mut buf).unwrap();
             let (char, pos) = buf.trim().split_once(',').unwrap();
             let char = char.chars().next().unwrap();
+            attempts.push(char);
             let pos: Vec<_> = pos
                 .strip_prefix('(')
                 .unwrap()
                 .strip_suffix(')')
                 .unwrap()
                 .split(',')
+                .filter(|e| !e.is_empty())
                 .map(|e| e.parse().unwrap())
                 .collect();
+            if pos.is_empty() {
+                matches.remove_with_letter(char);
+            };
             word.add_letter(char, &pos).unwrap();
-            matches = matches.get_matching(&word);
+            matches = dbg!(matches.get_matching(&word));
         } else {
             break;
         }
